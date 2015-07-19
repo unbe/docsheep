@@ -11,10 +11,10 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
+	"unsafe"
 
 	"github.com/unbe/go.tesseract"
-	"gopkg.in/GeertJohan/go.leptonica.v1"
+	//	"gopkg.in/GeertJohan/go.leptonica.v1"
 )
 
 func B(cb C.BOOL) bool {
@@ -81,22 +81,19 @@ func main() {
 	if tessdata_prefix == "" {
 		tessdata_prefix = "/usr/local/share"
 	}
-	t, err := tesseract.NewTess(filepath.Join(tessdata_prefix, "tessdata"), "deu+eng")
+	datadir := filepath.Join(tessdata_prefix, "tessdata")
+	t, err := tesseract.NewTess(datadir, "deu+eng")
 	if err != nil {
 		log.Fatalf("Error while initializing Tess: %s\n", err)
 	}
 	defer t.Close()
-
-	fmt.Println("Tess handle: %v", t.Handle())
-
 	// open a new Pix from file with leptonica
-	pix, err := leptonica.NewPixFromFile(image)
-	if err != nil {
-		log.Fatalf("Error while getting pix from file: %s\n", err)
-	}
-	defer pix.Close() // remember to cleanup
-
-	// set the page seg mode to autodetect
+	/*	pix, err := leptonica.NewPixFromFile(image)
+		if err != nil {
+			log.Fatalf("Error while getting pix from file: %s\n", err)
+		}
+		defer pix.Close()
+	*/
 	t.SetPageSegMode(tesseract.PSM_AUTO_OSD)
 
 	// setup a whitelist of all basic ascii
@@ -105,32 +102,48 @@ func main() {
 		log.Fatalf("Failed to SetVariable: %s\n", err)
 	}*/
 
-	// set the image to the tesseract instance
-	t.SetImagePix(pix)
+	cOutputbase := C.CString("./ocr")
+	defer C.free(unsafe.Pointer(cOutputbase))
+	cDatadir := C.CString(datadir)
+	defer C.free(unsafe.Pointer(cDatadir))
 
-	// retrieve text from the tesseract instance
-	fmt.Println(t.Text())
+	pdfRenderer := C.TessPDFRendererCreate(cOutputbase, cDatadir)
+	C.TessDeleteResultRenderer(pdfRenderer)
+	fmt.Printf("%#v\n", pdfRenderer)
 
 	th := (*C.struct_TessBaseAPI)(t.Handle())
-	ri := C.TessBaseAPIGetIterator(th)
-	defer C.TessResultIteratorDelete(ri)
 
-	words := make([]TessWord, 0)
-	if ri != nil {
-		pi := C.TessResultIteratorGetPageIterator(ri)
-		for {
-			words = append(words, GetWord(ri))
-			if C.TessPageIteratorNext(pi, C.RIL_WORD) == C.int(0) {
-				break
+	cImage := C.CString(image)
+	defer C.free(unsafe.Pointer(cImage))
+	C.TessBaseAPIProcessPages(th, cImage, nil, 0, pdfRenderer)
+	//	C.TessDeleteResultRenderer(pdfRenderer)
+
+	/*
+		t.SetImagePix(pix)
+
+		text := t.Text()
+		fmt.Printf("%s", text)
+
+		ri := C.TessBaseAPIGetIterator(th)
+		defer C.TessResultIteratorDelete(ri)
+
+		words := make([]TessWord, 0)
+		if ri != nil {
+			pi := C.TessResultIteratorGetPageIterator(ri)
+			for {
+				words = append(words, GetWord(ri))
+				if C.TessPageIteratorNext(pi, C.RIL_WORD) == C.int(0) {
+					break
+				}
 			}
 		}
-	}
-	sort.Stable(sort.Reverse(ByFontSize(words)))
-	for _, word := range words {
-		if word.confidence > 75 && len(word.text) >= 3 {
-			fmt.Printf("%#v\n", word)
+		sort.Stable(sort.Reverse(ByFontSize(words)))
+		for _, word := range words {
+			if word.confidence > 75 && len(word.text) >= 3 {
+				fmt.Printf("%#v\n", word)
+			}
 		}
-	}
 
-	// t.DumpVariables()
+		t.DumpVariables()
+	*/
 }
