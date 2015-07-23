@@ -262,7 +262,7 @@ func main() {
 	}
 
 	if len(r.Items) > 0 {
-		for n, i := range r.Items {
+		for _, i := range r.Items {
 			log.Printf("%s (%s) %s %#v\n", i.Title, i.Id, i.MimeType, i.DownloadUrl)
 			if i.DownloadUrl == "" {
 				continue
