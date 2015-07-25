@@ -154,7 +154,7 @@ func ocrImage(tiffFile string, outputPrefix string) (title string, confScore flo
 	words := make([]Word, 0)
 	wordStoplist := make(map[string]bool)
 	for _, word := range strings.Split("Mister Herr Frau 8052 8802 Artem Natalia Malyshev Malyshew Malysheva Weinbergstrasse 23 Höhenring Schaffhauserstrasse 547", " ") {
-		wordStoplist[word] = true
+		wordStoplist[strings.ToUpper(word)] = true
 	}
 	doc.Find("#page_1").Find(".ocrx_word").Each(func(i int, s *goquery.Selection) {
 		props := make(map[string]string)
@@ -177,7 +177,7 @@ func ocrImage(tiffFile string, outputPrefix string) (title string, confScore flo
 		if height > 1400 {
 			weight -= 50
 		}
-		if wordStoplist[s.Text()] {
+		if wordStoplist[strings.ToUpper(s.Text())] {
 			weight -= 100
 		}
 		words = append(words, Word{s.Text(), fontSize, confidence, isStrong, isEm, height, weight, props})
