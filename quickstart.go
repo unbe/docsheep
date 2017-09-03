@@ -231,10 +231,14 @@ func main() {
 
 	srv, err := drive.New(client)
 	if err != nil {
-		log.Fatalf("Unable to retrieve drive Client %v", err)
+		log.Fatalf("Unable to retrieve drive Client: %v", err)
 	}
 
 	r, err := srv.Files.List().Q("mimeType = 'application/vnd.google-apps.folder' and title = 'Scanner'").MaxResults(2).Do()
+	if err != nil {
+		log.Fatalf("Unable to search: %v", err)
+	}
+
 	if len(r.Items) != 1 {
 		log.Fatalf("No Scanner folter (%v)", r.Items)
 	}
