@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"flag"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"unicode"
 
 	"github.com/PuerkitoBio/goquery"
@@ -134,6 +136,7 @@ func avg(slice []int) float64 {
 func ocrImage(tiffFile string, outputPrefix string) (title string, confScore float64) {
 	tessCmd := exec.Command("tesseract", tiffFile, outputPrefix,
 		"-l", "deu+eng",
+		"--oem", "1",
 		"-c", "tessedit_create_pdf=1",
 		"-c", "tessedit_create_txt=1",
 		"-c", "tessedit_create_hocr=1",
@@ -283,6 +286,7 @@ func main() {
 			}
 			io.Copy(out, resp.Body)
 			out.Close()
+
 			tiffFile := i.Id + ".tiff"
 			gsCmd := exec.Command(
 				"gs", "-dNumRenderingThreads=4", "-dINTERPOLATE", "-sDEVICE=tiff24nc", "-r300",
@@ -292,6 +296,54 @@ func main() {
 			if err != nil {
 				log.Fatal(err)
 			}
+
+			zbarCmd := exec.Command("zbarimg", "--xml", tiffFile)
+			log.Printf("Running zbar: %v\n", zbarCmd.Args)
+			zbarOutput, err := zbarCmd.Output()
+			if err != nil {
+				if exitError, ok := err.(*exec.ExitError); ok {
+					ws := exitError.Sys().(syscall.WaitStatus)
+					exitCode := ws.ExitStatus()
+					// Accept exit code 4, which means no barcode found
+					if exitCode != 4 {
+						log.Fatalf("zbar exit: %s", err)
+					}
+				} else {
+					log.Fatalf("zbar exec: %s", err)
+				}
+			}
+
+			type ZbarSymbol struct {
+				Type        string `xml:"type,attr"`
+				Quality     int    `xml:"quality,attr"`
+				Orientation string `xml:"orientation,attr"`
+				Data        string `xml:"data"`
+			}
+			type ZbarIndex struct {
+				Num    int          `xml:"num"`
+				Symbol []ZbarSymbol `xml:"symbol"`
+			}
+			type ZbarSource struct {
+				Href  string      `xml:"href"`
+				Index []ZbarIndex `xml:"index"`
+			}
+			type ZbarXml struct {
+				XMLName xml.Name     `xml:"barcodes"`
+				Source  []ZbarSource `xml:"source"`
+			}
+			var barcodes ZbarXml
+			xml.Unmarshal(zbarOutput, &barcodes)
+			var barcodesTextBuilder strings.Builder
+			for _, src := range barcodes.Source {
+				for _, index := range src.Index {
+					for _, symbol := range index.Symbol {
+						barcodesTextBuilder.WriteString(fmt.Sprintf("\n*** BARCODE %s q=%d %s***\n", symbol.Type, symbol.Quality, symbol.Orientation))
+						barcodesTextBuilder.WriteString(symbol.Data)
+						barcodesTextBuilder.WriteString("\n*** END OF BARCODE ***\n")
+					}
+				}
+			}
+			barcodeString := barcodesTextBuilder.String()
 
 			var title, outputPrefix string
 			rotations := []int{0, 180, 90, 270}
@@ -318,7 +370,7 @@ func main() {
 				}
 				titleR, confScore := ocrImage(ocrInput, outputPrefixR)
 				log.Printf("Confidence: %f for title %s", confScore, titleR)
-				goodEnough := confScore > 70
+				goodEnough := confScore > 80
 				if goodEnough || len(title) == 0 {
 					outputPrefix = outputPrefixR
 					title = titleR
@@ -337,7 +389,7 @@ func main() {
 				log.Fatal(err)
 			}
 			defer pdfFile.Close()
-			descr := string(ocrText) + "\nSource: " + i.Title + " " + i.Id + "\n" + i.AlternateLink + "\n" + i.CreatedDate
+			descr := string(ocrText) + barcodeString + "\nSource: " + i.Title + " " + i.Id + "\n" + i.AlternateLink + "\n" + i.CreatedDate
 			file_meta := &drive.File{Title: title, Description: descr, MimeType: "application/pdf", CreatedDate: i.CreatedDate, ModifiedDate: i.CreatedDate}
 			file_meta.Parents = []*drive.ParentReference{&drive.ParentReference{Id: processedId}}
 			insertedFile, err := srv.Files.Insert(file_meta).Media(pdfFile).Ocr(false).Do()
